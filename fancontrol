@@ -5,6 +5,7 @@
 #   sudo fancontrol off     stop automatic control and force the fan OFF
 #   sudo fancontrol auto    hand control back to the fan-monitor service
 #   fancontrol status       temp, fan and service state (no root needed)
+#   sudo fancontrol setup   interactively change ON/OFF temperatures
 #
 # Manual on/off is sticky: the automatic service is stopped so it cannot
 # overwrite your setting on its next poll. Run `fancontrol auto` to resume.
@@ -19,6 +20,9 @@ DEFAULTS_FILE=/etc/default/fan-monitor
 
 GPIO=507
 TEMP_INPUT=/sys/class/hwmon/hwmon0/temp1_input
+INTERVAL=20
+CPU_HI=60000
+CPU_LOW=45000
 
 if [ -r "$DEFAULTS_FILE" ]; then
     # shellcheck disable=SC1091
@@ -36,6 +40,7 @@ Usage: fancontrol <command>
   off     stop automatic control and force the fan OFF
   auto    resume automatic control (fan-monitor service)
   status  show temp, fan and service state (no root needed)
+  setup   interactively change ON/OFF temperatures
 EOF
 }
 
@@ -108,11 +113,67 @@ cmd_status() {
     printf 'temp:     %s\nfan:      %s (gpio%s)\nservice:  %s\n' "$_temp" "$_gpio" "$GPIO" "$_svc"
 }
 
+# Prompt for a whole-degree temperature, empty input keeps the default.
+# Prints the value in millidegrees on stdout.
+ask_temp() { # <prompt> <default_millideg>
+    _prompt=$1 _def_milli=$2 _answer=""
+    _def_c=$((_def_milli / 1000))
+    while :; do
+        printf '%s [%s C]: ' "$_prompt" "$_def_c" >&2
+        IFS= read -r _answer || { echo >&2; die "aborted (no input)"; }
+        case "$_answer" in
+            '') printf '%s\n' "$_def_milli"; return 0;;
+            *[!0-9]*) echo "please enter a whole number of degrees C (empty keeps $_def_c)" >&2;;
+            *) printf '%s\n' "$((_answer * 1000))"; return 0;;
+        esac
+    done
+}
+
+cmd_setup() {
+    need_root setup
+    [ -t 0 ] || die "setup needs an interactive terminal"
+    _cur_hi=$CPU_HI _cur_low=$CPU_LOW
+    if [ -r "$TEMP_INPUT" ] && _raw=$(cat "$TEMP_INPUT" 2>/dev/null); then
+        case "$_raw" in ''|*[!0-9]*) ;; *) echo "current temp: $((_raw / 1000)) C";; esac
+    fi
+    echo "current thresholds: ON at/above $((_cur_hi / 1000)) C, OFF at/below $((_cur_low / 1000)) C"
+    while :; do
+        _new_hi=$(ask_temp "Fan ON at/above (C)" "$_cur_hi")
+        _new_low=$(ask_temp "Fan OFF at/below (C)" "$_cur_low")
+        if [ "$_new_low" -lt "$_new_hi" ]; then
+            break
+        fi
+        echo "OFF ($((_new_low / 1000)) C) must be below ON ($((_new_hi / 1000)) C) - try again" >&2
+    done
+    CPU_HI="$_new_hi" CPU_LOW="$_new_low"
+    cat > "$DEFAULTS_FILE" <<EOF
+# fan-monitor configuration - edit, then: systemctl restart fan-monitor
+# Temperatures are in millidegrees Celsius. Fan turns ON at/above CPU_HI,
+# OFF at/below CPU_LOW, and holds its state in between (hysteresis).
+GPIO=$GPIO
+TEMP_INPUT=$TEMP_INPUT
+INTERVAL=$INTERVAL
+CPU_HI=$CPU_HI
+CPU_LOW=$CPU_LOW
+EOF
+    chmod 0644 "$DEFAULTS_FILE"
+    logger -t "$TAG" "Thresholds updated: ON at/above $((CPU_HI / 1000)) C, OFF at/below $((CPU_LOW / 1000)) C"
+    echo "$PROG: thresholds saved: ON at/above $((CPU_HI / 1000)) C, OFF at/below $((CPU_LOW / 1000)) C"
+    if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$UNIT" 2>/dev/null; then
+        systemctl restart "$UNIT" \
+            || die "saved, but failed to restart $UNIT - see: journalctl -u $UNIT"
+        echo "$PROG: service restarted with new thresholds"
+    else
+        echo "$PROG: service is stopped (manual override) - new thresholds apply on '$PROG auto'"
+    fi
+}
+
 [ "$#" -eq 1 ] || { usage >&2; exit 1; }
 case "$1" in
     on|off) cmd_manual "$1";;
     auto) cmd_auto;;
     status) cmd_status;;
+    setup) cmd_setup;;
     -h|--help|help) usage;;
     *) usage >&2; die "unknown command: $1";;
 esac

@@ -37,6 +37,7 @@ sudo fancontrol off     # stop auto control, force fan OFF
 sudo fancontrol on      # stop auto control, force fan ON
 sudo fancontrol auto    # resume automatic control
 fancontrol status       # temp, fan and service state
+sudo fancontrol setup   # interactively change ON/OFF temperatures
 ```
 
 Manual `on`/`off` is sticky — the service stays stopped until `auto`.
