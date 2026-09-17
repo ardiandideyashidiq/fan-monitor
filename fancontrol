@@ -77,8 +77,11 @@ cmd_auto() {
 }
 
 cmd_status() {
-    if [ -r "$TEMP_INPUT" ]; then
-        _temp="$(cat "$TEMP_INPUT" 2>/dev/null) millidegC"
+    if _raw=$(cat "$TEMP_INPUT" 2>/dev/null); then
+        case "$_raw" in
+            ''|*[!0-9]*) _temp="invalid reading ('$_raw')";;
+            *) _temp="$((_raw / 1000)) C";;
+        esac
     else
         _temp="unreadable ($TEMP_INPUT)"
     fi
