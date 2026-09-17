@@ -1,0 +1,104 @@
+#!/bin/sh
+# fan_monitor - simple on/off GPIO fan controller with hysteresis.
+#
+# Polls a temperature input (millidegrees Celsius) and toggles a sysfs
+# GPIO that switches the fan: fully ON or fully OFF (no PWM levels).
+#
+# Works with any POSIX sh (dash, bash, busybox ash) on Linux with
+# sysfs GPIO. See README.md for details.
+#
+# Configuration is read from /etc/default/fan-monitor when present;
+# the values below are the built-in defaults:
+#   GPIO        sysfs GPIO number driving the fan switch (default 507,
+#               which is GPIOAO_6 on HG680P-class Amlogic boxes)
+#   TEMP_INPUT  temperature input path (default hwmon0 temp1_input)
+#   INTERVAL    poll interval in seconds (default 20)
+#   CPU_HI      turn fan ON at/above this temp (default 60000 = 60 C)
+#   CPU_LOW     turn fan OFF at/below this temp (default 45000 = 45 C)
+# Between CPU_LOW and CPU_HI the previous state is kept (hysteresis).
+set -u
+
+GPIO=507
+TEMP_INPUT=/sys/class/hwmon/hwmon0/temp1_input
+INTERVAL=20
+CPU_HI=60000
+CPU_LOW=45000
+FANLOW=0
+FANHI=1
+
+if [ -r /etc/default/fan-monitor ]; then
+    # shellcheck disable=SC1091
+    . /etc/default/fan-monitor
+fi
+
+is_int() {
+    case "$1" in
+        ''|*[!0-9]*) return 1;;
+        *) return 0;;
+    esac
+}
+
+die() {
+    logger -t FAN_MONITOR "ERROR: $1"
+    echo "fan_monitor: ERROR: $1" >&2
+    exit 1
+}
+
+is_int "$GPIO" || die "GPIO is not a number: '$GPIO'"
+is_int "$INTERVAL" || die "INTERVAL is not a number: '$INTERVAL'"
+is_int "$CPU_HI" || die "CPU_HI is not a number: '$CPU_HI'"
+is_int "$CPU_LOW" || die "CPU_LOW is not a number: '$CPU_LOW'"
+[ "$INTERVAL" -ge 1 ] || die "INTERVAL must be >= 1"
+[ "$CPU_LOW" -lt "$CPU_HI" ] || die "CPU_LOW ($CPU_LOW) must be below CPU_HI ($CPU_HI)"
+[ -r "$TEMP_INPUT" ] || die "cannot read temperature input: $TEMP_INPUT"
+
+if [ -d "/sys/class/gpio/gpio$GPIO" ]; then
+    logger -t FAN_MONITOR "gpio$GPIO already exported"
+else
+    echo "$GPIO" > /sys/class/gpio/export 2>/dev/null \
+        || die "cannot export gpio$GPIO"
+fi
+echo out > "/sys/class/gpio/gpio$GPIO/direction" 2>/dev/null \
+    || die "cannot set gpio$GPIO direction to out"
+
+cur_fan=0
+new_fan="$FANHI"
+
+fan_set() {
+    cur_fan=$1
+    if [ "$1" -eq "$FANLOW" ]; then
+        _label="OFF"
+    else
+        _label="ON"
+    fi
+    logger -t FAN_MONITOR "Setting Fan to $_label"
+    echo "$1" > "/sys/class/gpio/gpio$GPIO/value" \
+        || logger -t FAN_MONITOR "WARNING: failed to write gpio$GPIO"
+}
+
+# On exit, force the fan ON as a precaution.
+trap "{ logger -t FAN_MONITOR 'Fan monitor exiting'; fan_set $FANHI; logger -t FAN_MONITOR 'Fan left ON as a precaution'; exit; }" INT TERM
+
+while :; do
+    if [ "$new_fan" -ne "$cur_fan" ]; then
+        fan_set "$new_fan"
+    fi
+    sleep "$INTERVAL"
+
+    if _t=$(cat "$TEMP_INPUT" 2>/dev/null); then
+        case "$_t" in
+            ''|*[!0-9]*)
+                logger -t FAN_MONITOR "WARNING: ignoring non-numeric temp reading: '$_t'"
+                ;;
+            *)
+                if [ "$_t" -ge "$CPU_HI" ]; then
+                    new_fan="$FANHI"
+                elif [ "$_t" -le "$CPU_LOW" ]; then
+                    new_fan="$FANLOW"
+                fi
+                ;;
+        esac
+    else
+        logger -t FAN_MONITOR "WARNING: failed to read $TEMP_INPUT, keeping state"
+    fi
+done
