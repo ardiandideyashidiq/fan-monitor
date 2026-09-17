@@ -1,0 +1,115 @@
+#!/bin/sh
+# fancontrol - manual control for fan-monitor.
+#
+#   sudo fancontrol on      stop automatic control and force the fan ON
+#   sudo fancontrol off     stop automatic control and force the fan OFF
+#   sudo fancontrol auto    hand control back to the fan-monitor service
+#   fancontrol status       temp, fan and service state (no root needed)
+#
+# Manual on/off is sticky: the automatic service is stopped so it cannot
+# overwrite your setting on its next poll. Run `fancontrol auto` to resume.
+#
+# Reads /etc/default/fan-monitor (GPIO, TEMP_INPUT) when present.
+set -eu
+
+PROG=fancontrol
+TAG=FAN_MONITOR
+UNIT=fan-monitor.service
+DEFAULTS_FILE=/etc/default/fan-monitor
+
+GPIO=507
+TEMP_INPUT=/sys/class/hwmon/hwmon0/temp1_input
+
+if [ -r "$DEFAULTS_FILE" ]; then
+    # shellcheck disable=SC1091
+    . "$DEFAULTS_FILE"
+fi
+
+die() { echo "$PROG: ERROR: $1" >&2; exit 1; }
+need_root() { [ "$(id -u)" -eq 0 ] || die "must run as root - e.g. 'sudo $PROG $1'"; }
+is_int() { case "$1" in ''|*[!0-9]*) return 1;; *) return 0;; esac; }
+
+usage() {
+    cat <<'EOF'
+Usage: fancontrol <command>
+  on      stop automatic control and force the fan ON
+  off     stop automatic control and force the fan OFF
+  auto    resume automatic control (fan-monitor service)
+  status  show temp, fan and service state (no root needed)
+EOF
+}
+
+ensure_gpio() {
+    is_int "$GPIO" || die "GPIO is not a number: '$GPIO'"
+    if [ ! -d "/sys/class/gpio/gpio$GPIO" ]; then
+        echo "$GPIO" > /sys/class/gpio/export 2>/dev/null \
+            || die "cannot export gpio$GPIO"
+    fi
+    echo out > "/sys/class/gpio/gpio$GPIO/direction" 2>/dev/null \
+        || die "cannot set gpio$GPIO direction to out"
+}
+
+write_gpio() { # 0|1
+    echo "$1" > "/sys/class/gpio/gpio$GPIO/value" \
+        || die "failed to write gpio$GPIO"
+}
+
+cmd_manual() { # on|off
+    need_root "$1"
+    command -v systemctl >/dev/null 2>&1 || die "systemd is required (systemctl not found)"
+    ensure_gpio
+    if [ "$1" = "on" ]; then _v=1; else _v=0; fi
+    # Stop first (the daemon's exit trap forces ON), then write the
+    # requested state so it is not immediately overwritten.
+    systemctl stop "$UNIT" 2>/dev/null || true
+    write_gpio "$_v"
+    logger -t "$TAG" "Manual override: fan $1 (automatic control stopped)"
+    echo "$PROG: fan $1 (automatic control stopped; run '$PROG auto' to resume)"
+}
+
+cmd_auto() {
+    need_root auto
+    command -v systemctl >/dev/null 2>&1 || die "systemd is required (systemctl not found)"
+    systemctl start "$UNIT" \
+        || die "failed to start $UNIT - see: journalctl -u $UNIT"
+    logger -t "$TAG" "Manual override cleared: automatic control resumed"
+    echo "$PROG: automatic control resumed"
+}
+
+cmd_status() {
+    if [ -r "$TEMP_INPUT" ]; then
+        _temp="$(cat "$TEMP_INPUT" 2>/dev/null) millidegC"
+    else
+        _temp="unreadable ($TEMP_INPUT)"
+    fi
+    if [ -r "/sys/class/gpio/gpio$GPIO/value" ]; then
+        case "$(cat "/sys/class/gpio/gpio$GPIO/value" 2>/dev/null)" in
+            0) _gpio="OFF";;
+            1) _gpio="ON";;
+            *) _gpio="unknown";;
+        esac
+    elif [ -d "/sys/class/gpio/gpio$GPIO" ]; then
+        _gpio="no read permission (try sudo)"
+    else
+        _gpio="not exported"
+    fi
+    if command -v systemctl >/dev/null 2>&1; then
+        if systemctl is-active --quiet "$UNIT" 2>/dev/null; then
+            _svc="active (automatic)"
+        else
+            _svc="inactive (manual override)"
+        fi
+    else
+        _svc="no systemd"
+    fi
+    printf 'temp:     %s\nfan:      %s (gpio%s)\nservice:  %s\n' "$_temp" "$_gpio" "$GPIO" "$_svc"
+}
+
+[ "$#" -eq 1 ] || { usage >&2; exit 1; }
+case "$1" in
+    on|off) cmd_manual "$1";;
+    auto) cmd_auto;;
+    status) cmd_status;;
+    -h|--help|help) usage;;
+    *) usage >&2; die "unknown command: $1";;
+esac

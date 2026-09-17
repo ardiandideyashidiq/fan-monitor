@@ -13,6 +13,8 @@ systemctl stop fan-monitor.service 2>/dev/null || true
 systemctl disable fan-monitor.service 2>/dev/null || true
 rm -f /etc/systemd/system/fan-monitor.service \
       /usr/local/bin/fan_monitor \
+      /usr/local/bin/fancontrol \
+      /usr/local/bin/fanctl \
       /etc/default/fan-monitor
 systemctl daemon-reload || true
 

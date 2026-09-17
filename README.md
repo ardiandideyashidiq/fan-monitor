@@ -30,6 +30,17 @@ Edit `/etc/default/fan-monitor`, then `sudo systemctl restart fan-monitor`.
 
 In between, the previous state is kept (hysteresis). Stopping the service forces the fan **ON** as a precaution.
 
+## Manual control
+
+```sh
+sudo fancontrol off     # stop auto control, force fan OFF
+sudo fancontrol on      # stop auto control, force fan ON
+sudo fancontrol auto    # resume automatic control
+fancontrol status       # temp, fan and service state
+```
+
+Manual `on`/`off` is sticky — the service stays stopped until `auto`.
+
 ## Verify
 
 ```sh

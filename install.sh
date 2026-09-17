@@ -18,8 +18,10 @@ set -eu
 
 PROG=fan-monitor
 DAEMON_SRC=fan_monitor
+CTL_SRC=fancontrol
 UNIT_SRC=fan-monitor.service
 DAEMON_DST=/usr/local/bin/fan_monitor
+CTL_DST=/usr/local/bin/fancontrol
 UNIT_DST=/etc/systemd/system/fan-monitor.service
 DEFAULTS_FILE=/etc/default/fan-monitor
 
@@ -113,20 +115,25 @@ esac
 if [ -z "$_dir" ] && [ -f "./$DAEMON_SRC" ] && [ -f "./$UNIT_SRC" ]; then
     _dir=$(pwd)
 fi
-if [ -n "$_dir" ] && [ -f "$_dir/$DAEMON_SRC" ] && [ -f "$_dir/$UNIT_SRC" ]; then
+if [ -n "$_dir" ] && [ -f "$_dir/$DAEMON_SRC" ] && [ -f "$_dir/$CTL_SRC" ] && [ -f "$_dir/$UNIT_SRC" ]; then
     info "using local files from $_dir"
     cp "$_dir/$DAEMON_SRC" "$DAEMON_DST.tmp"
+    cp "$_dir/$CTL_SRC" "$CTL_DST.tmp"
     cp "$_dir/$UNIT_SRC" "$UNIT_DST.tmp"
 else
     command -v curl >/dev/null 2>&1 || die "curl is required to download $PROG files"
     info "downloading from $RAW_BASE"
     curl -fsSL "$RAW_BASE/$DAEMON_SRC" -o "$DAEMON_DST.tmp" \
         || die "download failed: $DAEMON_SRC"
+    curl -fsSL "$RAW_BASE/$CTL_SRC" -o "$CTL_DST.tmp" \
+        || die "download failed: $CTL_SRC"
     curl -fsSL "$RAW_BASE/$UNIT_SRC" -o "$UNIT_DST.tmp" \
         || die "download failed: $UNIT_SRC"
 fi
 [ "$(head -n 1 "$DAEMON_DST.tmp")" = "#!/bin/sh" ] \
     || die "downloaded daemon failed sanity check"
+[ "$(head -n 1 "$CTL_DST.tmp")" = "#!/bin/sh" ] \
+    || die "downloaded fancontrol failed sanity check"
 
 if [ "$explicit" -eq 1 ] || [ ! -r "$DEFAULTS_FILE" ]; then
     cat > "$DEFAULTS_FILE" <<EOF
@@ -146,6 +153,8 @@ else
 fi
 chmod 0755 "$DAEMON_DST.tmp"
 mv "$DAEMON_DST.tmp" "$DAEMON_DST"
+chmod 0755 "$CTL_DST.tmp"
+mv "$CTL_DST.tmp" "$CTL_DST"
 chmod 0644 "$UNIT_DST.tmp"
 mv "$UNIT_DST.tmp" "$UNIT_DST"
 
@@ -162,3 +171,6 @@ fi
 info "recent log:"
 journalctl -t FAN_MONITOR -n 5 --no-pager || true
 info "done. Tune $DEFAULTS_FILE, then: systemctl restart fan-monitor"
+# Drop the old name if a previous install left it behind.
+rm -f /usr/local/bin/fanctl
+info "manual control: fancontrol on | fancontrol off | fancontrol auto | fancontrol status"
