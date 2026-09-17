@@ -2,7 +2,7 @@
 # install.sh - install fan-monitor (GPIO fan controller) as a systemd service.
 #
 # One-liner:
-#   curl -fsSL https://raw.githubusercontent.com/<owner>/fan-monitor/main/install.sh | sudo sh
+#   curl -fsSL https://raw.githubusercontent.com/ardiandideyashidiq/fan-monitor/main/install.sh | sudo sh
 #
 # With options:
 #   curl -fsSL <url>/install.sh | sudo sh -s -- --on 60000 --off 45000 --gpio 507

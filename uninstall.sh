@@ -1,6 +1,6 @@
 #!/bin/sh
 # uninstall.sh - remove fan-monitor.
-#   curl -fsSL https://raw.githubusercontent.com/<owner>/fan-monitor/main/uninstall.sh | sudo sh
+#   curl -fsSL https://raw.githubusercontent.com/ardiandideyashidiq/fan-monitor/main/uninstall.sh | sudo sh
 #   or from a local clone: sudo ./uninstall.sh
 set -eu
 
