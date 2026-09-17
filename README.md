@@ -61,6 +61,17 @@ curl -fsSL https://raw.githubusercontent.com/ardiandideyashidiq/fan-monitor/main
 Default `GPIO=507` is `GPIOAO_6`, the fan pin on the HG680P. On other boards
 **confirm your fan pin first** — the wrong GPIO toggles the wrong hardware.
 
+Tested on:
+
+| Item     | Value                                              |
+| -------- | -------------------------------------------------- |
+| Box      | HG680P (Amlogic S905X, device-tree model "Meson GXL (S905X) P212") |
+| OS       | Armbian 26.8.3 noble (Ubuntu 24.04 LTS base)       |
+| Kernel   | 6.1.137-ophub, aarch64                             |
+| RAM/CPU  | 1.8 GiB, 4 cores                                   |
+| Fan pin  | GPIO 507 (`aobus-banks` line 6, `GPIOAO_6`)        |
+| Temp     | `/sys/class/hwmon/hwmon0/temp1_input` (`scpi_sensors`, `aml_thermal`) |
+
 ## License
 
 MIT — see `LICENSE`.
